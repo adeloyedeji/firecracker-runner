@@ -1,0 +1,53 @@
+# Lima VM for Firecracker development on Apple Silicon M3+.
+# Needs macOS 15+ and Lima >= 1.0 for nested virtualization.
+#
+# Usage:
+#   brew install lima
+#   limactl start --name=fc ./lima/firecracker.yaml
+#   limactl shell fc
+#   ls -l /dev/kvm     # must exist
+#
+vmType: vz
+nestedVirtualization: true
+
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+
+cpus: 2
+memory: "2GiB"
+disk: "20GiB"
+
+# The repo is mounted writable so you can build on macOS and run in the VM.
+# Keep snapshots / rootfs / per-run dirs on the VM's own disk (~/fc-artifacts),
+# NOT on this mount: virtiofs makes mmap-backed snapshot memory loads slow and
+# would distort your numbers.
+mounts:
+  - location: "~/src/repos/virtualization"
+    writable: true
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y curl wget acl squashfs-tools e2fsprogs jq make golang-go
+      # KVM access for the default Lima user (re-applied every boot).
+      if [ -e /dev/kvm ]; then
+        if [ -n "${LIMA_CIDATA_USER:-}" ]; then
+          setfacl -m "u:${LIMA_CIDATA_USER}:rw" /dev/kvm
+        else
+          chmod 666 /dev/kvm   # dev VM only
+        fi
+      fi
+
+probes:
+  - description: "/dev/kvm is available (nested virtualization works)"
+    script: |
+      #!/bin/bash
+      test -e /dev/kvm
+    hint: |
+      /dev/kvm is missing. Nested virtualization needs an M3 or newer chip,
+      macOS 15+, vmType: vz and a Lima version that supports nestedVirtualization.
